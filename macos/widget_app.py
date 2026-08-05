@@ -822,7 +822,7 @@ class Widget(NSObject):
             os.system(f"launchctl bootout gui/$(id -u)/{AGENT_LABEL} 2>/dev/null")
             os.remove(AGENT_PLIST)
         else:
-            app = os.path.expanduser("~/Desktop/Apps/Animal Kill Clock.app")
+            app = "/Applications/Animal Kill Clock.app"
             target = (f"{app}/Contents/MacOS/launch" if os.path.exists(app)
                       else os.path.abspath(__file__))
             os.makedirs(os.path.dirname(AGENT_PLIST), exist_ok=True)

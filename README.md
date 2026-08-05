@@ -16,7 +16,7 @@ zero-install window or as a real desktop-level wallpaper widget.
 | `widget.html`              | The widget. Self-contained, no dependencies, works offline.        |
 | `macos/widget_app.py`      | macOS host: a borderless WKWebView pinned at the desktop layer.    |
 | `macos/sync.py`            | Pulls the live figures from animalclock.org.                       |
-| `macos/make-app.sh`        | Builds `~/Desktop/Apps/Animal Kill Clock.app`.                     |
+| `macos/make-app.sh`        | Builds `Animal Kill Clock.app` into `/Applications`.               |
 | `windows/AnimalKillClock.hta` | Windows, zero install. Double-click it.                        |
 | `windows/README.md`        | Both Windows routes, including Lively Wallpaper.                   |
 
@@ -24,8 +24,10 @@ zero-install window or as a real desktop-level wallpaper widget.
 
 ```sh
 ./macos/make-app.sh
-open ~/Desktop/Apps/"Animal Kill Clock.app"
+open -a "Animal Kill Clock"
 ```
+
+Installs to `/Applications`; set `AKC_APP_DIR` to put it somewhere else.
 
 Requires [uv](https://docs.astral.sh/uv/); the first launch resolves PyObjC and
 caches it.

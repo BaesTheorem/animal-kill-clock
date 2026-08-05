@@ -11,7 +11,7 @@
 set -e
 
 PROJ="$(cd "$(dirname "$0")/.." && pwd)"
-APP="$HOME/Desktop/Apps/Animal Kill Clock.app"
+APP="${AKC_APP_DIR:-/Applications}/Animal Kill Clock.app"
 UV="${UV:-$HOME/.local/bin/uv}"
 
 [ -x "$UV" ] || UV="$(command -v uv || true)"
@@ -92,4 +92,4 @@ touch "$APP"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
   -f "$APP" 2>/dev/null || true
 
-echo "Done. Open it from ~/Desktop/Apps, then use the 'Kill Clock' menu bar item."
+echo "Done. Open it from Applications, then use the 'Kill Clock' menu bar item."
