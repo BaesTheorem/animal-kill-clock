@@ -27,6 +27,8 @@ import json
 import os
 import signal
 import sys
+import threading
+import time
 
 import objc
 from AppKit import (
@@ -35,6 +37,7 @@ from AppKit import (
     NSApplicationActivationPolicyAccessory,
     NSBackingStoreBuffered,
     NSColor,
+    NSCursor,
     NSEvent,
     NSMakePoint,
     NSMakeRect,
@@ -66,11 +69,16 @@ from WebKit import (
     WKWebViewConfiguration,
 )
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import sync as syncmod  # noqa: E402  (needs the path above)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 WIDGET = os.path.normpath(os.path.join(HERE, "..", "widget.html"))
 
 SUPPORT = os.path.expanduser("~/Library/Application Support/AnimalKillClock")
 CONFIG = os.path.join(SUPPORT, "config.json")
+SYNC_CACHE = os.path.join(SUPPORT, "sync.json")
+SYNC_EVERY = 6 * 3600     # seconds between refreshes of the published figures
 
 AGENT_LABEL = "org.animalclock.widget"
 AGENT_PLIST = os.path.expanduser(f"~/Library/LaunchAgents/{AGENT_LABEL}.plist")
@@ -171,14 +179,24 @@ class WidgetWindow(NSWindow):
         return True
 
 
+EDGE = 10.0     # width of the resize strip along each side, in points
+SNAP = 14.0     # how close to a screen edge before the card sticks to it
+MIN_W = 300.0
+MAX_W = 1600.0
+
+
 class DragView(NSView):
-    """A transparent surface over the web view that drags the window.
+    """A transparent surface over the web view that moves and resizes the window.
 
     WKWebView consumes mouse events, so setMovableByWindowBackground: never
     fires and CSS -webkit-app-region (an Electron feature) does nothing here.
     Laying an ordinary NSView over the whole web view is the reliable way to get
     a grabbable card. The page underneath is display-only, so nothing is lost;
     its one link is duplicated in the menu.
+
+    Grabbing within EDGE points of the left or right side resizes instead of
+    moving. Only the width is draggable: the card's height is whatever its
+    content needs at that width, so the window shrink-wraps to it afterwards.
     """
 
     def initWithFrame_(self, frame):
@@ -187,7 +205,8 @@ class DragView(NSView):
             return None
         self.owner = None
         self._grab = None
-        self._origin = None
+        self._frame0 = None
+        self._edge = None       # None | "left" | "right"
         return self
 
     def acceptsFirstMouse_(self, event):
@@ -196,25 +215,63 @@ class DragView(NSView):
         # need a second click.
         return True
 
+    # -- cursor feedback ----------------------------------------------------
+    def resetCursorRects(self):
+        b = self.bounds()
+        grip = NSCursor.resizeLeftRightCursor()
+        self.addCursorRect_cursor_(NSMakeRect(0, 0, EDGE, b.size.height), grip)
+        self.addCursorRect_cursor_(
+            NSMakeRect(b.size.width - EDGE, 0, EDGE, b.size.height), grip)
+
+    # -- interaction --------------------------------------------------------
     def mouseDown_(self, event):
+        p = self.convertPoint_fromView_(event.locationInWindow(), None)
+        w = self.bounds().size.width
+        self._edge = "left" if p.x <= EDGE else ("right" if p.x >= w - EDGE else None)
         self._grab = NSEvent.mouseLocation()
-        self._origin = self.window().frame().origin
-        debug("mouseDown grab=%s origin=%s" % (self._grab, self._origin))
+        self._frame0 = self.window().frame()
+        debug("mouseDown edge=%s grab=%s" % (self._edge, self._grab))
 
     def mouseDragged_(self, event):
         if self._grab is None:
             return
         now = NSEvent.mouseLocation()
+        dx = now.x - self._grab.x
+        dy = now.y - self._grab.y
+        f = self._frame0
+
+        if self._edge:
+            # Keep the edge you did NOT grab pinned, and the top edge pinned,
+            # since the height is about to be recomputed from the content.
+            if self._edge == "right":
+                width = f.size.width + dx
+            else:
+                width = f.size.width - dx
+            width = max(MIN_W, min(MAX_W, width))
+            x = f.origin.x if self._edge == "right" else f.origin.x + f.size.width - width
+            top = f.origin.y + f.size.height
+            self.window().setFrame_display_(
+                NSMakeRect(x, top - f.size.height, width, f.size.height), True)
+            if self.owner is not None:
+                self.owner.widthChanged(width)
+            return
+
         self.window().setFrameOrigin_(
-            NSMakePoint(self._origin.x + (now.x - self._grab.x),
-                        self._origin.y + (now.y - self._grab.y))
+            self.owner.collide(f.origin.x + dx, f.origin.y + dy,
+                               f.size.width, f.size.height)
+            if self.owner is not None
+            else NSMakePoint(f.origin.x + dx, f.origin.y + dy)
         )
 
     def mouseUp_(self, event):
-        moved = self._grab is not None
+        acted = self._grab is not None
+        edge = self._edge
         self._grab = None
-        debug("mouseUp moved=%s" % moved)
-        if moved and self.owner is not None:
+        self._edge = None
+        debug("mouseUp acted=%s edge=%s" % (acted, edge))
+        if acted and self.owner is not None:
+            if edge:
+                self.owner.widthSettled()
             self.owner.rememberPosition()
 
 
@@ -225,10 +282,72 @@ class Widget(NSObject):
         if self is None:
             return None
         self.cfg = cfg
+        self.sync = syncmod.load_cache(SYNC_CACHE)
+        self.syncing = False
         self.buildWindow()
         self.buildStatusItem()
         self.apply()
+        self.maybeSync()
         return self
+
+    # ------------------------------------------------------------------- sync
+    @objc.python_method
+    def maybeSync(self, force=False):
+        """Refresh the published figures from animalclock.org, off the main thread.
+
+        The cache on disk is what the widget actually draws from, so a failed or
+        slow fetch costs nothing: the card is already on screen with the last
+        good figures, or with the built-ins on a first run with no network.
+        """
+        if self.syncing:
+            return
+        age = time.time() - (self.sync or {}).get("fetchedAt", 0)
+        if not force and age < SYNC_EVERY:
+            return
+        self.syncing = True
+
+        def work():
+            payload = None
+            try:
+                payload = syncmod.fetch_all()
+            except Exception as exc:            # never let a fetch kill the app
+                debug("sync failed: %r" % (exc,))
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                b"syncFinished:", payload, False
+            )
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def syncFinished_(self, payload):
+        self.syncing = False
+        if payload:
+            self.sync = payload
+            syncmod.save_cache(SYNC_CACHE, payload)
+            debug("sync ok: %s" % list(payload.get("regions", {})))
+            self.apply()
+        self.refreshMenu()
+
+    def syncNow_(self, sender):
+        self.maybeSync(force=True)
+        self.refreshMenu()
+
+    def syncTick_(self, _):
+        self.maybeSync()
+
+    @objc.python_method
+    def syncStatus(self):
+        if self.syncing:
+            return "Syncing..."
+        if not self.sync:
+            return "Not synced (using built-in figures)"
+        age = time.time() - self.sync.get("fetchedAt", 0)
+        if age < 90:
+            return "Synced just now"
+        if age < 3600:
+            return "Synced %dm ago" % round(age / 60)
+        if age < 172800:
+            return "Synced %dh ago" % round(age / 3600)
+        return "Synced %dd ago" % round(age / 86400)
 
     @objc.python_method
     def buildWindow(self):
@@ -272,6 +391,11 @@ class Widget(NSObject):
         # when a full-screen window is covering the desktop the widget lives on.
         self.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             2.0, self, b"tick:", None, True
+        )
+        # Long-running widget: re-check the published figures periodically so a
+        # machine left on for weeks does not keep showing last month's rate.
+        self.syncTimer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            900.0, self, b"syncTick:", None, True
         )
 
     # ------------------------------------------------------------------- menu
@@ -335,6 +459,11 @@ class Widget(NSObject):
                               os.path.exists(AGENT_PLIST)))
 
         m.addItem_(NSMenuItem.separatorItem())
+        status = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            self.syncStatus(), None, "")
+        status.setEnabled_(False)
+        m.addItem_(status)
+        m.addItem_(self._item("Sync Now", b"syncNow:", ""))
         m.addItem_(self._item("Open animalclock.org", b"openSite:", ""))
         quit_ = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
             "Quit", b"quit:", "q"
@@ -359,10 +488,26 @@ class Widget(NSObject):
             "align": "center",
             "compact": "1" if cfg["compact"] else "0",
             "frame": "1" if cfg["frame"] else "0",
+            # The window IS the card here, so it should track a resized window
+            # rather than stopping at the 560px reading measure.
+            "fill": "1",
         }
+
+        # Hand the page whatever the last successful fetch produced for this
+        # region. Absent, it falls back to the figures built into widget.html.
+        live = (self.sync or {}).get("regions", {}).get(cfg["region"])
+        payload = {}
+        if live:
+            payload = {
+                "rate": live.get("rate"),
+                "species": live.get("species"),
+                "fetchedAt": self.sync.get("fetchedAt"),
+                "skew": self.sync.get("skew", 0),
+            }
         # loadFileURL: drops a query string, so hand the options to the page as a
         # global written before any of its own script runs.
-        src = "window.__AKC_OPTS__ = %s;" % json.dumps(opts)
+        src = ("window.__AKC_OPTS__ = %s; window.__AKC_SYNC__ = %s;"
+               % (json.dumps(opts), json.dumps(payload) if payload else "null"))
         self.userContent.removeAllUserScripts()
         self.userContent.addUserScript_(
             WKUserScript.alloc().initWithSource_injectionTime_forMainFrameOnly_(
@@ -437,11 +582,53 @@ class Widget(NSObject):
         )
 
     @objc.python_method
-    def rememberPosition(self):
+    def collide(self, x, y, w, h):
+        """Stop the card at the screen edges, and stick when it gets close.
+
+        Returns the origin the window should actually take for a requested one.
+        Clamping is what makes the edges solid; the SNAP band on top of it means
+        you do not have to land the drag pixel-perfectly to sit flush.
+        """
+        vis = self.visibleFrameFor(x + w / 2, y + h / 2)
+        left, bottom = vis.origin.x, vis.origin.y
+        right, top = left + vis.size.width, bottom + vis.size.height
+
+        x = max(left, min(x, right - w))
+        y = max(bottom, min(y, top - h))
+
+        if abs(x - left) < SNAP:
+            x = left
+        elif abs((x + w) - right) < SNAP:
+            x = right - w
+        if abs(y - bottom) < SNAP:
+            y = bottom
+        elif abs((y + h) - top) < SNAP:
+            y = top - h
+        return NSMakePoint(x, y)
+
+    @objc.python_method
+    def widthChanged(self, width):
+        """Live feedback while a side is being dragged."""
+        self.cfg["width"] = float(width)
+        # Record the position first. Re-fitting the height runs place(), which
+        # would otherwise yank the card back to the stored x and fight a drag on
+        # the left edge, where x is supposed to be moving.
+        self.rememberPosition(persist=False)
+        self.sizeToContent_(None)
+
+    @objc.python_method
+    def widthSettled(self):
+        """Persist the new width and re-run the menu's Size checkmarks."""
+        save_config(self.cfg)
+        self.refreshMenu()
+
+    @objc.python_method
+    def rememberPosition(self, persist=True):
         """Record where a drag left the card, so nothing snaps it back."""
         f = self.window.frame()
         self.cfg["pos"] = [float(f.origin.x), float(f.origin.y + f.size.height)]
-        save_config(self.cfg)
+        if persist:
+            save_config(self.cfg)
 
     @objc.python_method
     def visibleFrameFor(self, x, y):

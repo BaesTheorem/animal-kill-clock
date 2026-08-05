@@ -19,6 +19,11 @@
     ?bg=<css color>      page background behind the card (default transparent)
     ?compact=1           force-hide the per-species grid
     ?frame=0             drop the hairline border
+    ?fill=1              let the card fill the window instead of capping at 560px
+
+  Live figures: a host can set window.__AKC_SYNC__ before this script runs, with
+  {rate, species, fetchedAt, skew} pulled from animalclock.org (see
+  macos/sync.py). Without it the built-in figures below are used.
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -73,6 +78,9 @@
     text-align: center;
   }
   body.noframe .card { border: 0; }
+  /* The macOS host sets this: the window IS the card, so it should track the
+     window's width rather than stopping at the 560px reading measure. */
+  body.fill .card { max-width: none; }
 
   /* --- masthead ---------------------------------------------------------- */
   .masthead {
@@ -188,7 +196,8 @@
   <dl class="species" id="species"></dl>
   <p class="foot">
     <b id="rate"></b> a second<span class="dot">&middot;</span><b id="visit">0</b> since you opened this<br>
-    <a href="https://animalclock.org" target="_blank" rel="noopener">animalclock.org</a>
+    <a href="https://animalclock.org" target="_blank" rel="noopener">animalclock.org</a><span
+      class="dot">&middot;</span><span id="synced"></span>
   </p>
 </main>
 
@@ -250,14 +259,22 @@
     scale:   parseFloat(pick("scale", "1")) || 1,
     bg:      pick("bg", ""),
     compact: pick("compact", "0") === "1",
-    frame:   pick("frame", "1") !== "0"
+    frame:   pick("frame", "1") !== "0",
+    fill:    pick("fill", "0") === "1"
   };
+
+  /* Live figures pulled from animalclock.org by the host, if it managed to. See
+     macos/sync.py: the site has no counter API, so what syncs is the inputs
+     (the per-second rate, the annual per-species figures) plus the server clock
+     offset. Absent or stale, everything below falls back to the built-ins. */
+  var sync = window.__AKC_SYNC__ || null;
   if (!REGIONS[opt.region]) opt.region = "us";
   var region = REGIONS[opt.region];
 
   document.documentElement.setAttribute("data-theme", opt.theme === "dark" ? "dark" : "light");
   if (opt.bg) document.body.style.background = opt.bg;
   if (!opt.frame) document.body.classList.add("noframe");
+  if (opt.fill) document.body.classList.add("fill");
 
   var ALIGN = {
     "top-left":     ["flex-start", "flex-start"],
@@ -283,12 +300,18 @@
      species' share of the annual total, rather than running off their own
      independently rounded rates. That keeps the rows summing to the number
      above them.                                                              */
-  var now      = new Date();
-  var yearNum  = now.getFullYear();
+  // Server clock offset, so a machine whose own clock has drifted still counts
+  // against real time. Ignore an implausible value rather than trust it.
+  var skew = sync && typeof sync.skew === "number" && Math.abs(sync.skew) < 86400
+    ? sync.skew * 1000 : 0;
+  function nowMs() { return Date.now() + skew; }
+
+  var yearNum  = new Date(nowMs()).getFullYear();
   var yearOpen = new Date(yearNum, 0, 1, 0, 0, 0, 0);
 
-  var species = region.species || [];
-  var total   = region.perSecond;
+  // Fetched figures win over the built-ins; the built-ins are the offline floor.
+  var species = (sync && sync.species) || region.species || [];
+  var total   = (sync && sync.rate) || region.perSecond;
 
   var annual = 0, i;
   for (i = 0; i < species.length; i++) annual += species[i][1];
@@ -305,6 +328,18 @@
   $("caption").innerHTML =
     "animals have been killed for food<br><strong>this year</strong> " + region.where;
   $("rate").textContent = nf.format(Math.round(total));
+
+  // Say plainly where the figures came from. A widget that silently falls back
+  // to stale built-ins is worse than one that admits it is not connected.
+  (function () {
+    var el = $("synced");
+    if (!sync || !sync.fetchedAt) { el.textContent = "built-in figures"; return; }
+    var age = (Date.now() / 1000) - sync.fetchedAt;
+    if (age < 90) { el.textContent = "synced just now"; return; }
+    if (age < 3600) { el.textContent = "synced " + Math.round(age / 60) + "m ago"; return; }
+    if (age < 172800) { el.textContent = "synced " + Math.round(age / 3600) + "h ago"; return; }
+    el.textContent = "synced " + Math.round(age / 86400) + "d ago";
+  })();
 
   var speciesEl = $("species");
   var valueEls  = [];
@@ -326,13 +361,13 @@
   /* ------------------------------------------------------------------- tick */
   var countEl = $("count");
   var visitEl = $("visit");
-  var opened  = Date.now();
+  var opened  = nowMs();
   var lastTxt = "";
 
   function render() {
     // Whole seconds, matching the site's integer diff. Multiplying by a
     // fractional elapsed would put the last digits out of step with it.
-    var elapsed = Math.floor((Date.now() - yearOpen.getTime()) / 1000);
+    var elapsed = Math.floor((nowMs() - yearOpen.getTime()) / 1000);
     var txt = nf.format(elapsed * total);
 
     if (txt !== lastTxt) {
@@ -349,7 +384,7 @@
     for (var i = 0; i < valueEls.length; i++) {
       valueEls[i].textContent = nf.format(Math.floor(rates[i] * elapsed));
     }
-    visitEl.textContent = nf.format(Math.floor(total * (Date.now() - opened) / 1000));
+    visitEl.textContent = nf.format(Math.floor(total * (nowMs() - opened) / 1000));
   }
 
   /* -------------------------------------------------------------------- fit

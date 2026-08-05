@@ -15,6 +15,7 @@ zero-install window or as a real desktop-level wallpaper widget.
 | -------------------------- | ----------------------------------------------------------------- |
 | `widget.html`              | The widget. Self-contained, no dependencies, works offline.        |
 | `macos/widget_app.py`      | macOS host: a borderless WKWebView pinned at the desktop layer.    |
+| `macos/sync.py`            | Pulls the live figures from animalclock.org.                       |
 | `macos/make-app.sh`        | Builds `~/Desktop/Apps/Animal Kill Clock.app`.                     |
 | `windows/AnimalKillClock.hta` | Windows, zero install. Double-click it.                        |
 | `windows/README.md`        | Both Windows routes, including Lively Wallpaper.                   |
@@ -30,7 +31,14 @@ Requires [uv](https://docs.astral.sh/uv/); the first launch resolves PyObjC and
 caches it.
 
 **Drag it anywhere.** Grab the card and move it; where you drop it is
-remembered. Pick an anchor from the menu to snap it back to an edge.
+remembered. It collides with the screen edges rather than sliding off, and
+sticks when it gets within a few pixels of one, so it lands flush without you
+having to be precise. Pick an anchor from the menu to snap it back to an edge.
+
+**Resize it** by dragging either side. Only the width is yours to set: the
+height is whatever the card needs at that width, so the window shrink-wraps to
+its content afterwards. Everything scales together, so making it wider makes the
+whole widget bigger rather than just stretching it.
 
 The window sits just above your desktop icons and about two billion levels below
 every normal window. So it is pinned rather than floating: it never covers
@@ -47,6 +55,7 @@ From that menu:
 - **Region**: United States, United Kingdom, Canada, Australia
 - **Position**: nine anchors, plus **Reset Position** once you've dragged it
 - **Size**, **Theme**, **Screen**, **Just the Number**, **Show Border**
+- **Sync Now**, under a line showing how long ago the figures were fetched
 - **Open at Login**: writes a LaunchAgent
 
 Settings persist to `~/Library/Application Support/AnimalKillClock/config.json`.
@@ -77,29 +86,42 @@ falls back to the system sans if you're offline).
 Options go on the URL: `widget.html?region=uk&theme=dark&align=bottom-right`.
 The full table is in `windows/README.md`.
 
-## How the number is calculated
+## Where the numbers come from
 
-Same method as the source site: a per-second rate multiplied by the seconds
-elapsed since January 1 in your local time zone. Nothing is fetched at runtime.
+The widget syncs with animalclock.org over the network, on launch and every few
+hours after. What it fetches is worth being precise about, because it is not a
+count.
 
-The headline uses each region's **published per-second rate** (1,758 for the
-U.S.), not a rate re-derived from the annual totals. That distinction matters:
-dividing the annual figures by the length of the year gives about 1,757.96 a
-second, which looks more principled but drifts several hundred thousand below
-the website by mid-year. Using the published integer keeps the two in step to
-the digit.
+**The site has no counter API, and no server-side total to read.** Its headline
+is computed in your browser as `rate x seconds since January 1`, in *your* local
+time zone, which means two people in different time zones legitimately see
+different numbers on the same page. There is no single authoritative figure
+sitting on a server anywhere.
 
-The per-species lines then split that same headline in proportion to each
-species' share of the annual total, so the rows still sum to the number above
-them. Those U.S. annual figures are USDA slaughter data adjusted for imports,
-exports and pre-slaughter mortality, plus the Counting Animals estimates for
-fish and shellfish, roughly 55.4 billion a year. The other three countries are
-published only as a per-second rate, so those clocks run a total with no
-breakdown.
+So what syncs is the **inputs**, scraped from the pages themselves:
 
-To refresh the numbers, read the FAQ table at animalclock.org and edit the
-`REGIONS` block at the top of the script in `widget.html` (and the matching one
-in the `.hta`). Nothing else needs to change.
+- the per-second rate, from the `data-counter` attribute the site drives its own
+  headline from (1,758 for the U.S.)
+- the annual per-species figures from each region's death-stats section
+- the server's clock, from the HTTP `Date` header, so a machine whose own clock
+  has drifted still counts against real time
+
+That is a real network dependency on the source rather than a reimplementation
+of it: when the site updates its figures, the widget follows without a code
+change. The figures are cached to disk, so it draws instantly and keeps working
+offline, and the footer says which it is (`synced 2h ago` or `built-in
+figures`). If a fetch fails or the markup changes, it falls back to the values
+built into `widget.html` rather than blanking.
+
+The per-species lines split the headline in proportion to each species' share of
+the annual total, so the rows sum to the number above them. The U.S. figures are
+USDA slaughter data adjusted for imports, exports and pre-slaughter mortality,
+plus the Counting Animals estimates for fish and shellfish, roughly 55.4 billion
+a year.
+
+One caveat on comparing side by side: the website repaints its counter every two
+seconds, and this widget every 250ms, so at any instant the widget can read up
+to two seconds ahead. Both are computing the same thing.
 
 ## Credit
 

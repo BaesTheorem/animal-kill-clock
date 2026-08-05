@@ -133,6 +133,7 @@
   <div id="foot">
     <b id="rate"></b> a second &nbsp;&middot;&nbsp; <b id="visit">0</b> since you opened this<br>
     <a href="https://animalclock.org" target="_blank">animalclock.org</a>
+    &nbsp;&middot;&nbsp; <span id="synced">built-in figures</span>
   </div>
 </div>
 
@@ -198,25 +199,29 @@
                             "<b>this year</b> " + region.where;
   $("rate").innerHTML = commas(Math.round(total));
 
+  // Named so the live sync can rebuild the table when the fetched figures come
+  // back with a different set of rows than the built-ins.
   var cells = [];
-  if (showSpecies) {
-    var body = $("speciesBody"), html = "";
+  function buildSpecies() {
+    cells = [];
+    if (!showSpecies) { $("species").style.display = "none"; return; }
+    $("species").style.display = "";
+    var body = $("speciesBody"), html = "", j;
     // Two pairs per row, matching the widget's two-column grid.
-    for (i = 0; i < species.length; i += 2) {
-      html += "<tr><td>" + species[i][0] + "</td><td class='n' id='v" + i + "'></td>";
-      if (species[i + 1]) {
-        html += "<td>" + species[i + 1][0] + "</td>" +
-                "<td class='n2' id='v" + (i + 1) + "'></td>";
+    for (j = 0; j < species.length; j += 2) {
+      html += "<tr><td>" + species[j][0] + "</td><td class='n' id='v" + j + "'></td>";
+      if (species[j + 1]) {
+        html += "<td>" + species[j + 1][0] + "</td>" +
+                "<td class='n2' id='v" + (j + 1) + "'></td>";
       } else {
         html += "<td></td><td></td>";
       }
       html += "</tr>";
     }
     body.innerHTML = html;
-    for (i = 0; i < species.length; i++) cells.push($("v" + i));
-  } else {
-    $("species").style.display = "none";
+    for (j = 0; j < species.length; j++) cells.push($("v" + j));
   }
+  buildSpecies();
 
   // ------------------------------------------------------------------- tick
   var opened = new Date().getTime();
@@ -303,6 +308,64 @@
   render();
   layout();
   setInterval(render, 250);
+
+  // ------------------------------------------------------------- live sync
+  // An HTA runs with full local trust rather than in the browser sandbox, so it
+  // can read animalclock.org directly with no CORS involved. What syncs is the
+  // inputs (the per-second rate and the annual per-species figures), because the
+  // site has no counter API -- its clock is computed in the page from those, in
+  // the viewer's own time zone. Anything that fails leaves the built-ins in
+  // place; the card is already drawn by this point either way.
+  var PATHS = { us: "/", uk: "/uk", ca: "/ca", au: "/au" };
+
+  function httpGet(url, onDone) {
+    var x;
+    try { x = new ActiveXObject("MSXML2.XMLHTTP"); }
+    catch (e) { try { x = new XMLHttpRequest(); } catch (e2) { return; } }
+    try {
+      x.open("GET", url, true);
+      x.onreadystatechange = function () {
+        if (x.readyState === 4) onDone(x.status === 200 ? x.responseText : null);
+      };
+      x.send();
+    } catch (e3) { /* offline, blocked, whatever -- keep the built-ins */ }
+  }
+
+  function applyLive(html) {
+    if (!html) return;
+    var m = /class="counter"[^>]*data-counter="(\d+)"/.exec(html);
+    if (!m) return;
+    var liveRate = parseInt(m[1], 10);
+    if (!(liveRate > 0 && liveRate < 1000000)) return;
+
+    var re = /heading-stats"[^>]*>\s*([A-Za-z ]+?)\s*(?:<sup>[\s\S]*?<\/sup>)?\s*<\/h3>\s*<p>\s*([\d,]+)\s*<\/p>/g;
+    var found = [], hit;
+    while ((hit = re.exec(html)) !== null) {
+      found.push([hit[1], parseInt(hit[2].replace(/,/g, ""), 10)]);
+    }
+
+    total = liveRate;
+    $("rate").innerHTML = commas(liveRate);
+    if (found.length >= 4 && !CONFIG.COMPACT) {
+      species = found;
+      showSpecies = true;
+      buildSpecies();
+      rates = [];
+      var sum = 0, k;
+      for (k = 0; k < species.length; k++) sum += species[k][1];
+      for (k = 0; k < species.length; k++) rates.push(total * species[k][1] / sum);
+    }
+    $("synced").innerHTML = "synced just now";
+    render();
+    layout();
+  }
+
+  httpGet("https://animalclock.org" + (PATHS[CONFIG.REGION] || "/"), applyLive);
+
+  // Long-running widget: re-read the published figures every few hours.
+  setInterval(function () {
+    httpGet("https://animalclock.org" + (PATHS[CONFIG.REGION] || "/"), applyLive);
+  }, 6 * 3600 * 1000);
 })();
 </script>
 </body>

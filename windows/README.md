@@ -14,6 +14,11 @@ text editor).
 - **Close it** with `Esc`, or the `x` that appears when you hover.
 - **Configure it** by opening the file in Notepad and editing the `CONFIG` block
   near the top: region, theme, width, where on screen it opens, compact mode.
+- **It syncs.** An HTA runs with full local trust rather than in the browser
+  sandbox, so it reads the live rate and annual figures straight off
+  animalclock.org with no CORS in the way, on launch and every six hours. The
+  footer says whether it managed to. Offline, it falls back to the figures
+  built into the file.
 - **Start it with Windows**: press `Win+R`, run `shell:startup`, and drop a
   shortcut to the `.hta` in the folder that opens.
 
