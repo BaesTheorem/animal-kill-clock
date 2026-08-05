@@ -124,6 +124,9 @@ DEFAULTS = {
     "margin": 28,
     "compact": False,
     "frame": True,
+    # Repaint interval, ms. 2000 matches animalclock.org's own refresh so the
+    # two read alike side by side; 250 counts the actual second more closely.
+    "cadence": 2000,
     "screen": 0,
 }
 
@@ -455,6 +458,8 @@ class Widget(NSObject):
                               self.cfg["compact"]))
         m.addItem_(self._item("Show Border", b"toggleFrame:", "",
                               self.cfg["frame"]))
+        m.addItem_(self._item("Match Website Cadence", b"toggleCadence:", "",
+                              self.cfg.get("cadence", 2000) >= 2000))
         m.addItem_(self._item("Open at Login", b"toggleLogin:", "",
                               os.path.exists(AGENT_PLIST)))
 
@@ -488,6 +493,7 @@ class Widget(NSObject):
             "align": "center",
             "compact": "1" if cfg["compact"] else "0",
             "frame": "1" if cfg["frame"] else "0",
+            "cadence": str(cfg.get("cadence", 2000)),
             # The window IS the card here, so it should track a resized window
             # rather than stopping at the 560px reading measure.
             "fill": "1",
@@ -718,6 +724,13 @@ class Widget(NSObject):
 
     def toggleFrame_(self, sender):
         self.update(frame=not self.cfg["frame"])
+
+    def toggleCadence_(self, sender):
+        # On: repaint every 2s like the website, so the digits agree when both
+        # are on screen. Off: repaint 8x faster, which is a truer live count but
+        # visibly runs ahead of the site.
+        slow = self.cfg.get("cadence", 2000) >= 2000
+        self.update(cadence=250 if slow else 2000)
 
     def openSite_(self, sender):
         NSWorkspace.sharedWorkspace().openURL_(

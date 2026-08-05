@@ -20,6 +20,9 @@
     ?compact=1           force-hide the per-species grid
     ?frame=0             drop the hairline border
     ?fill=1              let the card fill the window instead of capping at 560px
+    ?cadence=2000        repaint interval in ms. 2000 matches the website's own
+                         refresh, so the two read alike side by side; 250 is a
+                         livelier, more accurate count of the actual second.
 
   Live figures: a host can set window.__AKC_SYNC__ before this script runs, with
   {rate, species, fetchedAt, skew} pulled from animalclock.org (see
@@ -258,6 +261,7 @@
     align:   pick("align",  "center").toLowerCase(),
     scale:   parseFloat(pick("scale", "1")) || 1,
     bg:      pick("bg", ""),
+    cadence: parseInt(pick("cadence", "2000"), 10) || 2000,
     compact: pick("compact", "0") === "1",
     frame:   pick("frame", "1") !== "0",
     fill:    pick("fill", "0") === "1"
@@ -269,6 +273,7 @@
      offset. Absent or stale, everything below falls back to the built-ins. */
   var sync = window.__AKC_SYNC__ || null;
   if (!REGIONS[opt.region]) opt.region = "us";
+  opt.cadence = Math.max(100, Math.min(10000, opt.cadence));
   var region = REGIONS[opt.region];
 
   document.documentElement.setAttribute("data-theme", opt.theme === "dark" ? "dark" : "light");
@@ -438,10 +443,17 @@
 
   render();
   relayout();
-  // Faster than the once-a-second value changes, so the card turns over within
-  // a frame or so of the actual second rather than lagging most of one. render()
-  // already no-ops when the formatted number is unchanged.
-  setInterval(render, 250);
+  /* Default 2000ms, matching animalclock.org's own setInterval. The site paints
+     every two seconds, so a widget ticking faster sits up to two seconds ahead
+     of it and the digits visibly disagree side by side. Matching the cadence
+     puts both in the same 0-2s staleness band.
+
+     Exact digit parity is not achievable, and it is worth knowing why: the
+     site's repaint phase is set by when its tab was loaded, not by the clock,
+     so two browser tabs opened a second apart disagree with each other too.
+     What this removes is the systematic offset, not the phase. Pass
+     ?cadence=250 to prioritise an accurate live count over matching. */
+  setInterval(render, opt.cadence);
 })();
 </script>
 </body>

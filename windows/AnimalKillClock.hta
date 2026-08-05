@@ -47,7 +47,10 @@
     POSITION: "top-right",   // top-left top top-right left center right
                              // bottom-left bottom bottom-right
     MARGIN:   28,            // gap from the screen edge
-    COMPACT:  false          // true = headline only, no species table
+    COMPACT:  false,         // true = headline only, no species table
+    CADENCE:  2000           // repaint interval, ms. 2000 matches the website's
+                             // own refresh so the two read alike side by side;
+                             // 250 counts the actual second more closely.
   };
   // Note: mshta exposes no topmost flag, so this is an ordinary window -- it
   // stays where you put it but other windows can cover it. If you want one
@@ -307,7 +310,7 @@
   // ------------------------------------------------------------------- boot
   render();
   layout();
-  setInterval(render, 250);
+  setInterval(render, Math.max(100, Math.min(10000, CONFIG.CADENCE || 2000)));
 
   // ------------------------------------------------------------- live sync
   // An HTA runs with full local trust rather than in the browser sandbox, so it

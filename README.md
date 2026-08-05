@@ -119,9 +119,23 @@ USDA slaughter data adjusted for imports, exports and pre-slaughter mortality,
 plus the Counting Animals estimates for fish and shellfish, roughly 55.4 billion
 a year.
 
-One caveat on comparing side by side: the website repaints its counter every two
-seconds, and this widget every 250ms, so at any instant the widget can read up
-to two seconds ahead. Both are computing the same thing.
+### Reading alike side by side
+
+The widget repaints every two seconds by default, matching the website's own
+refresh, so the digits agree when both are on screen. Measured over 12 samples
+against the live site, that holds the gap at a steady one second; ticking at
+250ms instead put it between one and three seconds and visibly jittering.
+
+The residual offset is the site's own load phase and cannot be removed. Its
+counter is seeded once when the page loads and then stepped by a timer of its
+own, so its idea of "now" is fixed by the moment you opened that tab. Two
+browser tabs of animalclock.org opened a second apart disagree with each other
+by the same amount. Matching the cadence removes the jitter, not the phase.
+
+If you would rather have the most accurate live count than one that matches the
+website, turn off **Match Website Cadence** in the menu (or pass
+`?cadence=250`). That counts the actual second more closely and runs slightly
+ahead of the site.
 
 ## Credit
 
