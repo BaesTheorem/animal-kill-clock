@@ -9,6 +9,41 @@ zero-install window or as a real desktop-level wallpaper widget.
 
 ![the widget](docs/preview.png)
 
+## Install
+
+**macOS**, paste in Terminal:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/BaesTheorem/animal-kill-clock/main/install.sh | bash
+```
+
+**Windows**, paste in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/BaesTheorem/animal-kill-clock/main/install.ps1 | iex
+```
+
+Neither one shows a Gatekeeper or SmartScreen warning, and not because
+anything is being sidestepped: both gates only inspect files stamped as
+downloaded from the internet (macOS's quarantine attribute, Windows's
+mark-of-the-web), and these installers never execute such a file. They fetch
+readable source and assemble everything locally on your machine, the same trust
+model as Homebrew. The macOS installer builds the .app on the spot; verified
+with a planted-quarantine control that the built bundle carries no quarantine
+attribute and launches with no prompt. The Windows widget runs on `mshta.exe`,
+which ships with Windows, so no third-party executable is installed at all.
+
+Uninstall on macOS:
+
+```sh
+rm -rf /Applications/"Animal Kill Clock.app" ~/.local/share/animal-kill-clock \
+       ~/Library/Application\ Support/AnimalKillClock \
+       ~/Library/LaunchAgents/org.animalclock.widget.plist
+```
+
+Uninstall on Windows: delete the Desktop (and Startup, if you made one)
+shortcut and `%LOCALAPPDATA%\AnimalKillClock`.
+
 ## What's here
 
 | Path                       | What it is                                                        |
@@ -19,8 +54,11 @@ zero-install window or as a real desktop-level wallpaper widget.
 | `macos/make-app.sh`        | Builds `Animal Kill Clock.app` into `/Applications`.               |
 | `windows/AnimalKillClock.hta` | Windows, zero install. Double-click it.                        |
 | `windows/README.md`        | Both Windows routes, including Lively Wallpaper.                   |
+| `install.sh` / `install.ps1` | The one-line installers above.                                   |
 
 ## macOS
+
+The installer above is the easy path. From a clone it's the same thing:
 
 ```sh
 ./macos/make-app.sh
@@ -28,9 +66,7 @@ open -a "Animal Kill Clock"
 ```
 
 Installs to `/Applications`; set `AKC_APP_DIR` to put it somewhere else.
-
-Requires [uv](https://docs.astral.sh/uv/); the first launch resolves PyObjC and
-caches it.
+Requires [uv](https://docs.astral.sh/uv/) (the installer sets it up for you).
 
 **Drag it anywhere.** Grab the card and move it; where you drop it is
 remembered. It collides with the screen edges rather than sliding off, and

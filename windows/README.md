@@ -1,11 +1,26 @@
 # Animal Kill Clock on Windows
 
-Two ways to run it, depending on whether you want a movable window or something
-pinned behind your desktop icons.
+The fastest path is the one-liner. Paste in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/BaesTheorem/animal-kill-clock/main/install.ps1 | iex
+```
+
+That writes the widget to `%LOCALAPPDATA%\AnimalKillClock`, puts a shortcut on
+your Desktop, and launches it, with no SmartScreen warning. SmartScreen only
+screens files carrying the mark-of-the-web that browsers stamp on downloads;
+a file written by your own PowerShell session has no such mark, and the widget
+runs on `mshta.exe`, which ships with Windows. Add `-Startup` (see the comments
+at the top of `install.ps1`) to also start it at login.
+
+Below are the two manual routes, depending on whether you want a movable window
+or something pinned behind your desktop icons.
 
 ## 1. Zero install: `AnimalKillClock.hta`
 
-Double-click it. That's the whole setup. Windows opens it with `mshta.exe`, which
+Double-click it. That's the whole setup. If you downloaded it with a browser,
+Windows may show an "open this file?" nudge the first time; that is the
+mark-of-the-web on the download itself, which the installer route avoids. Windows opens it with `mshta.exe`, which
 ships with every Windows install, so there is nothing to download and nothing to
 trust beyond the file itself (it is plain HTML and JavaScript, readable in any
 text editor).
