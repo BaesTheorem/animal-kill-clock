@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Animal Kill Clock</title>
+<!--
+  A desktop widget rendering of the U.S. Animal Kill Clock.
+
+  Data and concept come from animalclock.org (Ted McCoy / Animal Clock). This is an
+  independent widget build: the code here is original, the annual figures below are
+  the public USDA / Counting Animals numbers that site publishes and cites.
+
+  Query options (append to the file:// URL, or set them in the host app):
+    ?region=us|uk|ca|au   which clock to run           (default us)
+    ?theme=light|dark     light matches the website    (default light)
+    ?align=center|top-left|top|top-right|left|right|bottom-left|bottom|bottom-right
+    ?scale=1.0           multiplier on all type sizes  (default 1)
+    ?bg=<css color>      page background behind the card (default transparent)
+    ?compact=1           force-hide the per-species grid
+    ?frame=0             drop the hairline border
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- Loaded non-blocking: the widget must render instantly and work fully offline. -->
+<link rel="stylesheet" media="print" onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=Source+Sans+3:ital,wght@0,200;0,400;0,600;0,700&display=swap">
+<style>
+  :root {
+    --paper:   #f8f7f6;
+    --ink:     #4c4c4c;
+    --ink-dim: #8b8b8b;
+    --rule:    #e2ded9;
+    --accent:  #8b0000;
+    --u: 1px;              /* type unit, set from the card width by fit() */
+  }
+  html[data-theme="dark"] {
+    --paper:   #191817;
+    --ink:     #e6e2dd;
+    --ink-dim: #8f8a85;
+    --rule:    #34312e;
+    --accent:  #c1272d;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+    -webkit-font-smoothing: antialiased;
+    font-family: "Source Sans 3", "Source Sans Pro", -apple-system,
+                 BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  }
+
+  body {
+    display: flex;
+    color: var(--ink);
+    /* --align-* are written from the ?align= option at startup. */
+    justify-content: var(--align-x, center);
+    align-items: var(--align-y, center);
+    cursor: default;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* The whole card is the drag handle for the native macOS window. */
+  .card {
+    -webkit-app-region: drag;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    width: 100%;
+    max-width: 560px;
+    padding: calc(var(--u) * 26) calc(var(--u) * 22) calc(var(--u) * 20);
+    text-align: center;
+  }
+  body.noframe .card { border: 0; }
+
+  /* --- masthead ---------------------------------------------------------- */
+  .masthead {
+    font-size: calc(var(--u) * 20);
+    font-weight: 200;
+    letter-spacing: 0.15em;
+    line-height: 1.2;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .masthead strong { font-weight: 700; }
+  .masthead::after {
+    content: "";
+    display: block;
+    width: calc(var(--u) * 80);
+    border-top: 2px solid var(--accent);
+    margin: calc(var(--u) * 15) auto 0;
+  }
+
+  /* --- the number -------------------------------------------------------- */
+  .count {
+    /* inline-block so it shrink-wraps its text: fit() sizes the whole card off
+       this element's intrinsic width, which only works if it reports one. */
+    display: inline-block;
+    font-size: calc(var(--u) * 84);
+    font-weight: 700;
+    line-height: 1.08;
+    letter-spacing: -0.01em;
+    margin-top: calc(var(--u) * 16);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+    white-space: nowrap;
+  }
+
+  .caption {
+    font-size: calc(var(--u) * 19);
+    font-weight: 200;
+    line-height: 1.4;
+    margin-top: calc(var(--u) * 10);
+  }
+  .caption strong { font-weight: 600; }
+
+  /* --- per-species breakdown --------------------------------------------- */
+  .species {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: calc(var(--u) * 22);
+    row-gap: calc(var(--u) * 3);
+    margin-top: calc(var(--u) * 20);
+    padding-top: calc(var(--u) * 16);
+    border-top: 1px solid var(--rule);
+    font-size: calc(var(--u) * 14);
+    text-align: left;
+  }
+  .species div {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: calc(var(--u) * 8);
+  }
+  .species dt { font-weight: 400; color: var(--ink); }
+  .species dd {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+    white-space: nowrap;
+  }
+
+  /* --- footer ------------------------------------------------------------ */
+  .foot {
+    margin-top: calc(var(--u) * 18);
+    padding-top: calc(var(--u) * 12);
+    border-top: 1px solid var(--rule);
+    font-size: calc(var(--u) * 13);
+    font-weight: 400;
+    color: var(--ink-dim);
+    line-height: 1.5;
+  }
+  .foot b {
+    font-weight: 600;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+  .foot a {
+    color: var(--ink-dim);
+    text-decoration: none;
+    border-bottom: 1px solid var(--rule);
+    -webkit-app-region: no-drag;
+  }
+  .foot a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+  .dot { padding: 0 calc(var(--u) * 5); }
+
+  body.compact .species,
+  body.compact .foot { display: none; }
+  body.compact .card { padding: calc(var(--u) * 18) calc(var(--u) * 20); }
+
+  /* A one-frame tint when the number rolls, so the widget reads as live at a
+     glance. Motion-sensitive users get the number without the flicker. */
+  .count.tick { color: var(--accent); }
+  .count { transition: color 600ms linear; }
+  @media (prefers-reduced-motion: reduce) {
+    .count { transition: none; }
+    .count.tick { color: inherit; }
+  }
+</style>
+</head>
+<body>
+
+<main class="card" id="card">
+  <h1 class="masthead" id="masthead"></h1>
+  <p class="count" id="count">&nbsp;</p>
+  <p class="caption" id="caption"></p>
+  <dl class="species" id="species"></dl>
+  <p class="foot">
+    <b id="rate"></b> a second<span class="dot">&middot;</span><b id="visit">0</b> since you opened this<br>
+    <a href="https://animalclock.org" target="_blank" rel="noopener">animalclock.org</a>
+  </p>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ------------------------------------------------------------------ data
+     Annual deaths attributable to each country's food supply, as published by
+     animalclock.org. U.S. land-animal figures are USDA slaughter data adjusted
+     for imports/exports and pre-slaughter mortality; aquatic figures are the
+     Counting Animals estimates. Other countries are published only as a
+     per-second rate, so those clocks run a total with no breakdown.
+
+     To refresh: read the FAQ table at https://animalclock.org (and /uk, /ca, /au)
+     and replace the numbers below. Nothing else needs to change.            */
+  var REGIONS = {
+    us: {
+      label: "U.S.",
+      where: "in the United States",
+      species: [
+        ["Chickens",   8127632000],
+        ["Shellfish", 43109000000],
+        ["Fish",       3797000000],
+        ["Pigs",        124061000],
+        ["Turkeys",     214509000],
+        ["Cattle",       36164000],
+        ["Ducks",        23275000],
+        ["Sheep",         7499000]
+      ]
+    },
+    uk: { label: "U.K.",      where: "in the United Kingdom", perSecond: 204 },
+    ca: { label: "Canada",    where: "in Canada",             perSecond: 302 },
+    au: { label: "Australia", where: "in Australia",          perSecond: 157 }
+  };
+
+  /* ---------------------------------------------------------------- options
+     Query string first, then window.__AKC_OPTS__ on top. The native macOS host
+     loads this file with loadFileURL:, which will not carry a query string, so
+     it injects its settings as that global at document start instead.        */
+  var q = new URLSearchParams(location.search);
+  var inj = window.__AKC_OPTS__ || {};
+  var pick = function (key, dflt) {
+    if (inj[key] !== undefined && inj[key] !== null) return String(inj[key]);
+    var v = q.get(key);
+    return v === null ? dflt : v;
+  };
+
+  var opt = {
+    region:  pick("region", "us").toLowerCase(),
+    theme:   pick("theme",  "light").toLowerCase(),
+    align:   pick("align",  "center").toLowerCase(),
+    scale:   parseFloat(pick("scale", "1")) || 1,
+    bg:      pick("bg", ""),
+    compact: pick("compact", "0") === "1",
+    frame:   pick("frame", "1") !== "0"
+  };
+  if (!REGIONS[opt.region]) opt.region = "us";
+  var region = REGIONS[opt.region];
+
+  document.documentElement.setAttribute("data-theme", opt.theme === "dark" ? "dark" : "light");
+  if (opt.bg) document.body.style.background = opt.bg;
+  if (!opt.frame) document.body.classList.add("noframe");
+
+  var ALIGN = {
+    "top-left":     ["flex-start", "flex-start"],
+    "top":          ["center",     "flex-start"],
+    "top-right":    ["flex-end",   "flex-start"],
+    "left":         ["flex-start", "center"],
+    "center":       ["center",     "center"],
+    "right":        ["flex-end",   "center"],
+    "bottom-left":  ["flex-start", "flex-end"],
+    "bottom":       ["center",     "flex-end"],
+    "bottom-right": ["flex-end",   "flex-end"]
+  };
+  var a = ALIGN[opt.align] || ALIGN.center;
+  document.body.style.setProperty("--align-x", a[0]);
+  document.body.style.setProperty("--align-y", a[1]);
+
+  /* ------------------------------------------------------------------ rates
+     Per-second rates are derived from the annual totals over the real length of
+     the current year, so the species lines always add up to the headline and a
+     leap year does not inflate the count.                            */
+  var now      = new Date();
+  var yearNum  = now.getFullYear();
+  var yearOpen = new Date(yearNum, 0, 1, 0, 0, 0, 0);
+  var yearSecs = (new Date(yearNum + 1, 0, 1) - yearOpen) / 1000;
+
+  var species = region.species || [];
+  var rates   = species.map(function (s) { return s[1] / yearSecs; });
+  var total   = region.species
+    ? rates.reduce(function (x, y) { return x + y; }, 0)
+    : region.perSecond;
+
+  var showSpecies = species.length > 0 && !opt.compact;
+
+  /* -------------------------------------------------------------------- DOM */
+  var $ = function (id) { return document.getElementById(id); };
+  var nf = new Intl.NumberFormat("en-US");
+
+  $("masthead").innerHTML =
+    yearNum + " " + region.label + " <strong>Animal Kill Clock</strong>";
+  $("caption").innerHTML =
+    "animals have been killed for food<br><strong>this year</strong> " + region.where;
+  $("rate").textContent = nf.format(Math.round(total));
+
+  var speciesEl = $("species");
+  var valueEls  = [];
+  if (showSpecies) {
+    species.forEach(function (s) {
+      var row = document.createElement("div");
+      var dt  = document.createElement("dt");
+      var dd  = document.createElement("dd");
+      dt.textContent = s[0];
+      row.appendChild(dt);
+      row.appendChild(dd);
+      speciesEl.appendChild(row);
+      valueEls.push(dd);
+    });
+  } else {
+    speciesEl.remove();
+  }
+
+  /* ------------------------------------------------------------------- tick */
+  var countEl = $("count");
+  var visitEl = $("visit");
+  var opened  = Date.now();
+  var lastTxt = "";
+
+  function render() {
+    var elapsed = (Date.now() - yearOpen.getTime()) / 1000;
+    var txt = nf.format(Math.floor(total * elapsed));
+
+    if (txt !== lastTxt) {
+      // Refit only when the number gets longer. Re-measuring every second is a
+      // full reflow for nothing, since --u only depends on the digit count.
+      var grew = txt.length !== lastTxt.length;
+      countEl.textContent = txt;
+      lastTxt = txt;
+      countEl.classList.add("tick");
+      setTimeout(function () { countEl.classList.remove("tick"); }, 60);
+      if (grew) fit();
+    }
+
+    for (var i = 0; i < valueEls.length; i++) {
+      valueEls[i].textContent = nf.format(Math.floor(rates[i] * elapsed));
+    }
+    visitEl.textContent = nf.format(Math.floor(total * (Date.now() - opened) / 1000));
+  }
+
+  /* -------------------------------------------------------------------- fit
+     Everything sizes off --u, so the card is resolution independent: it looks
+     right in a 420px native window and as a 4K Lively wallpaper alike. The
+     number is the widest element, so --u is solved against its measured width
+     and then clamped so the rest of the card stays legible.                  */
+  var card = $("card");
+  var root = document.documentElement;
+
+  function setU(u) {
+    if (u < 0.10) u = 0.10;
+    if (u > 3.20) u = 3.20;
+    root.style.setProperty("--u", u.toFixed(4) + "px");
+    return u;
+  }
+
+  function fit() {
+    // Pass 1, width. Measure the number at a known unit, then scale so the
+    // longest line just fits the card's content box.
+    setU(1);
+    var style = getComputedStyle(card);
+    var inner = card.clientWidth
+              - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    var natural = countEl.getBoundingClientRect().width;   // its width at --u:1px
+    if (inner <= 0 || natural <= 0) { setU(0.5 * opt.scale); return; }
+
+    var u = setU((inner / natural) * opt.scale);
+
+    // Pass 2, height. The card can still be taller than the window (more so
+    // once the species grid is in), and a flex-centred overflow clips the top
+    // where it is least recoverable. Shrink to fit instead.
+    for (var i = 0; i < 3; i++) {
+      var over = card.offsetHeight / window.innerHeight;
+      if (over <= 1.001) break;
+      u = setU(u / over);
+    }
+  }
+
+  // Below this the species grid and footer stop being readable; drop them
+  // instead of shrinking the headline into nothing.
+  function autoCompact() {
+    var tight = window.innerHeight < 260 || window.innerWidth < 300;
+    document.body.classList.toggle("compact", opt.compact || tight);
+  }
+
+  function relayout() { autoCompact(); fit(); }
+
+  window.addEventListener("resize", relayout);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(relayout);
+
+  render();
+  relayout();
+  setInterval(render, 1000);
+})();
+</script>
+</body>
+</html>

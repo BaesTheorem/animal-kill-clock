@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta charset="utf-8">
+<title>Animal Kill Clock</title>
+<hta:application
+  id="akc"
+  applicationName="Animal Kill Clock"
+  border="none"
+  caption="no"
+  showInTaskbar="no"
+  sysMenu="no"
+  scroll="no"
+  innerBorder="no"
+  contextMenu="no"
+  selection="no"
+  maximizeButton="no"
+  minimizeButton="no"
+  singleInstance="yes"
+  icon="" />
+<!--
+  Animal Kill Clock -- Windows desktop widget, zero install.
+
+  Double-click this file. Windows runs it through mshta.exe, which is present on
+  every Windows install, so nothing needs downloading.
+
+    Drag       click and drag anywhere on the card
+    Move it    it remembers nothing; set POSITION below for where it opens
+    Close      press Esc, or click the x that appears on hover
+
+  This is the standalone build. It duplicates the widget rather than loading
+  ../widget.html because mshta runs the legacy Trident engine, which has no CSS
+  custom properties and no URLSearchParams -- the shared file targets modern
+  engines and would render broken here. For a full-fidelity version on Windows,
+  use ../widget.html with Lively Wallpaper instead (see README.md).
+
+  Data and concept: animalclock.org. Figures are the public USDA and Counting
+  Animals numbers that site publishes and cites.
+-->
+<script type="text/javascript">
+  // ---------------------------------------------------------------- settings
+  var CONFIG = {
+    REGION:   "us",          // us | uk | ca | au
+    THEME:    "light",       // light | dark
+    WIDTH:    480,           // card width in px; everything scales with it
+    POSITION: "top-right",   // top-left top top-right left center right
+                             // bottom-left bottom bottom-right
+    MARGIN:   28,            // gap from the screen edge
+    COMPACT:  false          // true = headline only, no species table
+  };
+  // Note: mshta exposes no topmost flag, so this is an ordinary window -- it
+  // stays where you put it but other windows can cover it. If you want one
+  // truly pinned behind your icons, use Lively Wallpaper (see README.md).
+
+</script>
+
+<style type="text/css">
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+  body {
+    background: #f8f7f6;
+    color: #4c4c4c;
+    font-family: "Source Sans Pro", "Segoe UI", Tahoma, Arial, sans-serif;
+    text-align: center;
+    cursor: default;
+    border: 1px solid #e2ded9;
+    -ms-user-select: none;
+  }
+  body.dark { background: #191817; color: #e6e2dd; border-color: #34312e; }
+
+  #card { padding: 26px 22px 20px 22px; }
+
+  #masthead {
+    font-size: 20px; font-weight: normal; letter-spacing: 3px;
+    text-transform: uppercase; margin: 0; line-height: 1.2;
+    white-space: nowrap;
+  }
+  #masthead b { font-weight: bold; }
+  #rule { width: 80px; height: 0; border-top: 2px solid #8b0000; margin: 15px auto 0 auto; }
+  body.dark #rule { border-top-color: #c1272d; }
+
+  #count {
+    /* inline-block so it shrink-wraps its text. As a block it would always
+       report the card's width and fitNumber() could never detect an overflow. */
+    display: inline-block;
+    font-size: 84px; font-weight: bold; line-height: 1.08;
+    margin: 16px 0 0 0; white-space: nowrap;
+  }
+  #caption { font-size: 19px; margin: 10px 0 0 0; line-height: 1.4; color: #6f6f6f; }
+  body.dark #caption { color: #b6b0a9; }
+  #caption b { font-weight: 600; color: #4c4c4c; }
+  body.dark #caption b { color: #e6e2dd; }
+
+  #species {
+    width: 100%; margin: 20px 0 0 0; padding-top: 16px;
+    border-top: 1px solid #e2ded9;
+    border-collapse: collapse; font-size: 14px; text-align: left;
+  }
+  body.dark #species { border-top-color: #34312e; }
+  #species td { padding: 2px 0; white-space: nowrap; }
+  #species td.n { text-align: right; font-weight: 600; padding-right: 22px; }
+  #species td.n2 { text-align: right; font-weight: 600; }
+
+  #foot {
+    margin: 18px 0 0 0; padding-top: 12px;
+    border-top: 1px solid #e2ded9;
+    font-size: 13px; color: #8f8a85; line-height: 1.5;
+  }
+  body.dark #foot { border-top-color: #34312e; }
+  #foot b { color: #4c4c4c; font-weight: 600; }
+  body.dark #foot b { color: #e6e2dd; }
+  #foot a { color: #8f8a85; text-decoration: none; border-bottom: 1px solid #e2ded9; }
+  #foot a:hover { color: #8b0000; }
+
+  #close {
+    position: absolute; top: 6px; right: 10px;
+    font-size: 15px; color: #b8b2ab; cursor: pointer;
+    display: none;
+  }
+  body:hover #close { display: block; }
+  #close:hover { color: #8b0000; }
+</style>
+</head>
+<body>
+
+<div id="close" title="Close">&#215;</div>
+<div id="card">
+  <h1 id="masthead">&nbsp;</h1>
+  <div id="rule"></div>
+  <div id="count">&nbsp;</div>
+  <div id="caption"></div>
+  <table id="species"><tbody id="speciesBody"></tbody></table>
+  <div id="foot">
+    <b id="rate"></b> a second &nbsp;&middot;&nbsp; <b id="visit">0</b> since you opened this<br>
+    <a href="https://animalclock.org" target="_blank">animalclock.org</a>
+  </div>
+</div>
+
+<script type="text/javascript">
+(function () {
+  // ------------------------------------------------------------------- data
+  // Annual deaths attributable to each country's food supply, per
+  // animalclock.org. Keep these in step with ../widget.html.
+  var REGIONS = {
+    us: {
+      label: "U.S.", where: "in the United States",
+      species: [
+        ["Chickens",   8127632000], ["Shellfish", 43109000000],
+        ["Fish",       3797000000], ["Pigs",        124061000],
+        ["Turkeys",     214509000], ["Cattle",       36164000],
+        ["Ducks",        23275000], ["Sheep",         7499000]
+      ]
+    },
+    uk: { label: "U.K.",      where: "in the United Kingdom", perSecond: 204 },
+    ca: { label: "Canada",    where: "in Canada",             perSecond: 302 },
+    au: { label: "Australia", where: "in Australia",          perSecond: 157 }
+  };
+
+  var region = REGIONS[CONFIG.REGION] || REGIONS.us;
+
+  // Trident has no Intl.NumberFormat worth trusting, so group digits by hand.
+  function commas(n) {
+    var s = String(Math.floor(n)), out = "", c = 0;
+    for (var i = s.length - 1; i >= 0; i--) {
+      out = s.charAt(i) + out;
+      if (++c % 3 === 0 && i > 0) out = "," + out;
+    }
+    return out;
+  }
+
+  function $(id) { return document.getElementById(id); }
+
+  // ------------------------------------------------------------------ rates
+  // Derived from the annual totals over the real length of this year, so the
+  // species rows always add up to the headline and a leap year does not inflate
+  // the count.
+  var now      = new Date();
+  var year     = now.getFullYear();
+  var yearOpen = new Date(year, 0, 1, 0, 0, 0, 0);
+  var yearSecs = (new Date(year + 1, 0, 1).getTime() - yearOpen.getTime()) / 1000;
+
+  var species = region.species || [];
+  var rates = [], total = 0, i;
+  for (i = 0; i < species.length; i++) {
+    rates.push(species[i][1] / yearSecs);
+    total += rates[i];
+  }
+  if (!species.length) total = region.perSecond;
+
+  var showSpecies = species.length > 0 && !CONFIG.COMPACT;
+
+  // -------------------------------------------------------------------- DOM
+  if (CONFIG.THEME === "dark") document.body.className = "dark";
+
+  $("masthead").innerHTML = year + " " + region.label + " <b>Animal Kill Clock</b>";
+  $("caption").innerHTML  = "animals have been killed for food<br>" +
+                            "<b>this year</b> " + region.where;
+  $("rate").innerHTML = commas(Math.round(total));
+
+  var cells = [];
+  if (showSpecies) {
+    var body = $("speciesBody"), html = "";
+    // Two pairs per row, matching the widget's two-column grid.
+    for (i = 0; i < species.length; i += 2) {
+      html += "<tr><td>" + species[i][0] + "</td><td class='n' id='v" + i + "'></td>";
+      if (species[i + 1]) {
+        html += "<td>" + species[i + 1][0] + "</td>" +
+                "<td class='n2' id='v" + (i + 1) + "'></td>";
+      } else {
+        html += "<td></td><td></td>";
+      }
+      html += "</tr>";
+    }
+    body.innerHTML = html;
+    for (i = 0; i < species.length; i++) cells.push($("v" + i));
+  } else {
+    $("species").style.display = "none";
+  }
+
+  // ------------------------------------------------------------------- tick
+  var opened = new Date().getTime();
+  var lastLen = 0;
+
+  function render() {
+    var elapsed = (new Date().getTime() - yearOpen.getTime()) / 1000;
+    var txt = commas(total * elapsed);
+    $("count").innerHTML = txt;
+    if (txt.length !== lastLen) { lastLen = txt.length; fitNumber(); }
+
+    for (var j = 0; j < cells.length; j++) {
+      cells[j].innerHTML = commas(rates[j] * elapsed);
+    }
+    $("visit").innerHTML =
+      commas(total * (new Date().getTime() - opened) / 1000);
+  }
+
+  // The headline is the widest thing on the card. Trident supports element
+  // `zoom`, which is the one reliable way to scale it here without CSS
+  // custom properties or transforms that would not reflow the card.
+  function fitNumber() {
+    var el = $("count");
+    el.style.zoom = "1";
+    var room = $("card").offsetWidth - 44;   // minus the card's horizontal padding
+    var w = el.offsetWidth;
+    if (w > room && w > 0) el.style.zoom = (room / w).toFixed(3);
+  }
+
+  // ---------------------------------------------------------- window layout
+  function layout() {
+    var w = CONFIG.WIDTH;
+    // The card scales as a whole with the requested width; 480 is the design size.
+    document.body.style.zoom = (w / 480).toFixed(4);
+    window.resizeTo(w, 200);              // provisional; corrected below
+    fitNumber();
+
+    var h = $("card").offsetHeight + 2;   // + the 1px border top and bottom
+    window.resizeTo(w, h);
+
+    var sw = screen.availWidth, sh = screen.availHeight, m = CONFIG.MARGIN;
+    var p = CONFIG.POSITION, x, y;
+
+    if (p.indexOf("left") > -1)       x = m;
+    else if (p.indexOf("right") > -1) x = sw - w - m;
+    else                              x = (sw - w) / 2;
+
+    if (p.indexOf("top") === 0)          y = m;
+    else if (p.indexOf("bottom") === 0)  y = sh - h - m;
+    else                                 y = (sh - h) / 2;
+
+    window.moveTo(x, y);
+  }
+
+  // ------------------------------------------------------------------- drag
+  // caption="no" means Windows gives us no title bar to drag, so move the
+  // window ourselves. screenX/screenY are absolute, so no offset bookkeeping
+  // is needed beyond where in the card the grab started.
+  var dragging = false, grabX = 0, grabY = 0;
+
+  document.onmousedown = function (e) {
+    e = e || window.event;
+    if (e.srcElement && e.srcElement.tagName === "A") return;
+    if (e.srcElement && e.srcElement.id === "close") return;
+    dragging = true;
+    grabX = e.clientX;
+    grabY = e.clientY;
+  };
+  document.onmousemove = function (e) {
+    if (!dragging) return;
+    e = e || window.event;
+    window.moveTo(e.screenX - grabX, e.screenY - grabY);
+  };
+  document.onmouseup = function () { dragging = false; };
+
+  document.onkeydown = function (e) {
+    e = e || window.event;
+    if (e.keyCode === 27) window.close();   // Esc
+  };
+  $("close").onclick = function () { window.close(); };
+
+  // ------------------------------------------------------------------- boot
+  render();
+  layout();
+  setInterval(render, 1000);
+})();
+</script>
+</body>
+</html>
