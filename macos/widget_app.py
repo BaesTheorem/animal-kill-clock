@@ -194,12 +194,14 @@ class DragView(NSView):
     WKWebView consumes mouse events, so setMovableByWindowBackground: never
     fires and CSS -webkit-app-region (an Electron feature) does nothing here.
     Laying an ordinary NSView over the whole web view is the reliable way to get
-    a grabbable card. The page underneath is display-only, so nothing is lost;
-    its one link is duplicated in the menu.
+    a grabbable card.
 
     Grabbing within EDGE points of the left or right side resizes instead of
     moving. Only the width is draggable: the card's height is whatever its
     content needs at that width, so the window shrink-wraps to it afterwards.
+
+    A click that does not turn into a drag is forwarded to the page as a hit
+    test, so the card's links still work through the overlay.
     """
 
     def initWithFrame_(self, frame):
@@ -210,6 +212,8 @@ class DragView(NSView):
         self._grab = None
         self._frame0 = None
         self._edge = None       # None | "left" | "right"
+        self._moved = 0.0
+        self.linkRects = []     # page-space rects of the card's links
         return self
 
     def acceptsFirstMouse_(self, event):
@@ -226,6 +230,22 @@ class DragView(NSView):
         self.addCursorRect_cursor_(
             NSMakeRect(b.size.width - EDGE, 0, EDGE, b.size.height), grip)
 
+        # Links live in page space (origin top-left); flip them into view space
+        # (origin bottom-left) so hovering one shows a hand rather than a drag
+        # cursor over what looks like an ordinary link.
+        hand = NSCursor.pointingHandCursor()
+        for (lx, ly, lw, lh) in self.linkRects:
+            self.addCursorRect_cursor_(
+                NSMakeRect(lx, b.size.height - ly - lh, lw, lh), hand)
+
+    @objc.python_method
+    def setLinkRects(self, rects):
+        if rects == self.linkRects:
+            return
+        self.linkRects = rects
+        if self.window() is not None:
+            self.window().invalidateCursorRectsForView_(self)
+
     # -- interaction --------------------------------------------------------
     def mouseDown_(self, event):
         p = self.convertPoint_fromView_(event.locationInWindow(), None)
@@ -233,6 +253,7 @@ class DragView(NSView):
         self._edge = "left" if p.x <= EDGE else ("right" if p.x >= w - EDGE else None)
         self._grab = NSEvent.mouseLocation()
         self._frame0 = self.window().frame()
+        self._moved = 0.0
         debug("mouseDown edge=%s grab=%s" % (self._edge, self._grab))
 
     def mouseDragged_(self, event):
@@ -241,6 +262,7 @@ class DragView(NSView):
         now = NSEvent.mouseLocation()
         dx = now.x - self._grab.x
         dy = now.y - self._grab.y
+        self._moved = max(self._moved, abs(dx) + abs(dy))
         f = self._frame0
 
         if self._edge:
@@ -269,13 +291,24 @@ class DragView(NSView):
     def mouseUp_(self, event):
         acted = self._grab is not None
         edge = self._edge
+        moved = self._moved
         self._grab = None
         self._edge = None
-        debug("mouseUp acted=%s edge=%s" % (acted, edge))
-        if acted and self.owner is not None:
-            if edge:
-                self.owner.widthSettled()
-            self.owner.rememberPosition()
+        debug("mouseUp acted=%s edge=%s moved=%.1f" % (acted, edge, moved))
+        if not acted or self.owner is None:
+            return
+
+        # A press that never really moved is a click, not a drag. Forward it to
+        # the page so links keep working through the overlay, and leave the
+        # saved position alone: a stray click should not rewrite it.
+        if edge is None and moved < 3.0:
+            p = self.convertPoint_fromView_(event.locationInWindow(), None)
+            self.owner.clickAt(p.x, self.bounds().size.height - p.y)
+            return
+
+        if edge:
+            self.owner.widthSettled()
+        self.owner.rememberPosition()
 
 
 class Widget(NSObject):
@@ -588,6 +621,53 @@ class Widget(NSObject):
         )
 
     @objc.python_method
+    def clickAt(self, x, y):
+        """Open whatever link sits under a click on the card.
+
+        The overlay that makes the card draggable also eats clicks meant for the
+        page, so hit-test the DOM at that point and handle any link natively.
+        Doing it here rather than letting the web view navigate is the right call
+        anyway: the anchors are target="_blank", which a WKWebView ignores unless
+        you implement a WKUIDelegate, so in-page clicks would have gone nowhere
+        even without the overlay. And a widget should never become a browser --
+        the link belongs in the user's actual browser.
+        """
+        js = (
+            "(function(){var e=document.elementFromPoint(%.1f,%.1f);"
+            "while(e&&e.tagName!=='A'){e=e.parentElement;}"
+            "return e&&e.href?e.href:'';})()" % (x, y)
+        )
+
+        def done(value, error):
+            if error is not None or not value:
+                return
+            url = NSURL.URLWithString_(str(value))
+            # Only ever hand the shell a real web URL. A page could otherwise
+            # steer this at a file:// or custom scheme.
+            if url is not None and url.scheme() in ("http", "https"):
+                NSWorkspace.sharedWorkspace().openURL_(url)
+
+        self.web.evaluateJavaScript_completionHandler_(js, done)
+
+    @objc.python_method
+    def refreshLinkRects(self):
+        """Tell the overlay where the page's links are, for the hand cursor."""
+        js = ("Array.prototype.map.call(document.querySelectorAll('a[href]'),"
+              "function(a){var r=a.getBoundingClientRect();"
+              "return [r.left,r.top,r.width,r.height];})")
+
+        def done(value, error):
+            if error is not None or value is None:
+                return
+            try:
+                rects = [tuple(float(n) for n in r) for r in value]
+            except (TypeError, ValueError):
+                return
+            self.drag.setLinkRects(rects)
+
+        self.web.evaluateJavaScript_completionHandler_(js, done)
+
+    @objc.python_method
     def collide(self, x, y, w, h):
         """Stop the card at the screen edges, and stick when it gets close.
 
@@ -753,6 +833,9 @@ class Widget(NSObject):
 
     def tick_(self, _):
         self.sizeToContent_(None)
+        # Link geometry moves whenever the card is resized or refitted, so keep
+        # the cursor rects in step rather than measuring once at load.
+        self.refreshLinkRects()
 
         def done(value, error):
             if error is None and value is not None:

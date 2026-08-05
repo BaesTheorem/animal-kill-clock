@@ -112,7 +112,8 @@
   body.dark #foot { border-top-color: #34312e; }
   #foot b { color: #4c4c4c; font-weight: 600; }
   body.dark #foot b { color: #e6e2dd; }
-  #foot a { color: #8f8a85; text-decoration: none; border-bottom: 1px solid #e2ded9; }
+  #foot a { color: #8f8a85; text-decoration: none; border-bottom: 1px solid #e2ded9;
+            cursor: pointer; }
   #foot a:hover { color: #8b0000; }
 
   #close {
@@ -135,7 +136,7 @@
   <table id="species"><tbody id="speciesBody"></tbody></table>
   <div id="foot">
     <b id="rate"></b> a second &nbsp;&middot;&nbsp; <b id="visit">0</b> since you opened this<br>
-    <a href="https://animalclock.org" target="_blank">animalclock.org</a>
+    <a href="https://animalclock.org" id="site">animalclock.org</a>
     &nbsp;&middot;&nbsp; <span id="synced">built-in figures</span>
   </div>
 </div>
@@ -306,6 +307,19 @@
     if (e.keyCode === 27) window.close();   // Esc
   };
   $("close").onclick = function () { window.close(); };
+
+  // Open in whatever browser the user actually uses. A plain target="_blank"
+  // under mshta hands the URL to the legacy engine and pops Internet Explorer;
+  // the shell verb respects the default browser instead.
+  $("site").onclick = function () {
+    var url = "https://animalclock.org";
+    try {
+      new ActiveXObject("WScript.Shell").Run(url);
+    } catch (e) {
+      try { window.open(url); } catch (e2) { /* nothing else to try */ }
+    }
+    return false;
+  };
 
   // ------------------------------------------------------------------- boot
   render();

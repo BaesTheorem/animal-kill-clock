@@ -35,6 +35,13 @@ remembered. It collides with the screen edges rather than sliding off, and
 sticks when it gets within a few pixels of one, so it lands flush without you
 having to be precise. Pick an anchor from the menu to snap it back to an edge.
 
+**The footer link works**, and opens in your real browser rather than inside
+the widget. That needs handling natively for two reasons: the transparent
+surface that makes the card draggable also swallows clicks meant for the page,
+and a WKWebView ignores `target="_blank"` unless you implement a `WKUIDelegate`,
+so the link was a dead click either way. A press that does not turn into a drag
+is hit-tested against the page and any link handed to the shell.
+
 **Resize it** by dragging either side. Only the width is yours to set: the
 height is whatever the card needs at that width, so the window shrink-wraps to
 its content afterwards. Everything scales together, so making it wider makes the
