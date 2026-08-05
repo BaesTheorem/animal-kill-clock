@@ -135,7 +135,7 @@ The full table is in `windows/README.md`.
 
 The widget syncs with animalclock.org over the network, on launch and every few
 hours after. What it fetches is worth being precise about, because it is not a
-count.
+count in the strictest sense.
 
 **The site has no counter API, and no server-side total to read.** Its headline
 is computed in your browser as `rate x seconds since January 1`, in *your* local
