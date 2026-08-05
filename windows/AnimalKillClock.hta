@@ -144,6 +144,9 @@
   var REGIONS = {
     us: {
       label: "U.S.", where: "in the United States",
+      // The site's published per-second rate, and what the headline is built
+      // from, so this reads the same as animalclock.org instead of drifting.
+      perSecond: 1758,
       species: [
         ["Chickens",   8127632000], ["Shellfish", 43109000000],
         ["Fish",       3797000000], ["Pigs",        124061000],
@@ -171,21 +174,19 @@
   function $(id) { return document.getElementById(id); }
 
   // ------------------------------------------------------------------ rates
-  // Derived from the annual totals over the real length of this year, so the
-  // species rows always add up to the headline and a leap year does not inflate
-  // the count.
+  // The headline is the region's published per-second rate against whole
+  // seconds elapsed since January 1 local time, exactly as the site computes it.
+  // The species rows then split that same headline in proportion to each
+  // species' share of the annual total, so they sum to the number above them.
   var now      = new Date();
   var year     = now.getFullYear();
   var yearOpen = new Date(year, 0, 1, 0, 0, 0, 0);
-  var yearSecs = (new Date(year + 1, 0, 1).getTime() - yearOpen.getTime()) / 1000;
 
   var species = region.species || [];
-  var rates = [], total = 0, i;
-  for (i = 0; i < species.length; i++) {
-    rates.push(species[i][1] / yearSecs);
-    total += rates[i];
-  }
-  if (!species.length) total = region.perSecond;
+  var total = region.perSecond;
+  var rates = [], annual = 0, i;
+  for (i = 0; i < species.length; i++) annual += species[i][1];
+  for (i = 0; i < species.length; i++) rates.push(total * species[i][1] / annual);
 
   var showSpecies = species.length > 0 && !CONFIG.COMPACT;
 
@@ -222,8 +223,9 @@
   var lastLen = 0;
 
   function render() {
-    var elapsed = (new Date().getTime() - yearOpen.getTime()) / 1000;
-    var txt = commas(total * elapsed);
+    // Whole seconds, matching the site's integer diff.
+    var elapsed = Math.floor((new Date().getTime() - yearOpen.getTime()) / 1000);
+    var txt = commas(elapsed * total);
     $("count").innerHTML = txt;
     if (txt.length !== lastLen) { lastLen = txt.length; fitNumber(); }
 
@@ -300,7 +302,7 @@
   // ------------------------------------------------------------------- boot
   render();
   layout();
-  setInterval(render, 1000);
+  setInterval(render, 250);
 })();
 </script>
 </body>

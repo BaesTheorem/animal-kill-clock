@@ -64,9 +64,7 @@
     -webkit-user-select: none;
   }
 
-  /* The whole card is the drag handle for the native macOS window. */
   .card {
-    -webkit-app-region: drag;
     background: var(--paper);
     border: 1px solid var(--rule);
     width: 100%;
@@ -163,7 +161,6 @@
     color: var(--ink-dim);
     text-decoration: none;
     border-bottom: 1px solid var(--rule);
-    -webkit-app-region: no-drag;
   }
   .foot a:hover { color: var(--accent); border-bottom-color: var(--accent); }
   .dot { padding: 0 calc(var(--u) * 5); }
@@ -212,6 +209,12 @@
     us: {
       label: "U.S.",
       where: "in the United States",
+      // The site's own published per-second rate, and the number the headline is
+      // built from, so this widget reads the same as animalclock.org rather than
+      // drifting from it. Deriving the rate from the annual totals instead looks
+      // more principled but lands ~1757.96/s, which is a few hundred thousand
+      // adrift by mid-year.
+      perSecond: 1758,
       species: [
         ["Chickens",   8127632000],
         ["Shellfish", 43109000000],
@@ -272,19 +275,24 @@
   document.body.style.setProperty("--align-y", a[1]);
 
   /* ------------------------------------------------------------------ rates
-     Per-second rates are derived from the annual totals over the real length of
-     the current year, so the species lines always add up to the headline and a
-     leap year does not inflate the count.                            */
+     The headline uses the region's published per-second rate against whole
+     seconds elapsed since January 1 local time, which is exactly what the site
+     does, so the two stay in step to the digit.
+
+     The per-species lines then split that same headline in proportion to each
+     species' share of the annual total, rather than running off their own
+     independently rounded rates. That keeps the rows summing to the number
+     above them.                                                              */
   var now      = new Date();
   var yearNum  = now.getFullYear();
   var yearOpen = new Date(yearNum, 0, 1, 0, 0, 0, 0);
-  var yearSecs = (new Date(yearNum + 1, 0, 1) - yearOpen) / 1000;
 
   var species = region.species || [];
-  var rates   = species.map(function (s) { return s[1] / yearSecs; });
-  var total   = region.species
-    ? rates.reduce(function (x, y) { return x + y; }, 0)
-    : region.perSecond;
+  var total   = region.perSecond;
+
+  var annual = 0, i;
+  for (i = 0; i < species.length; i++) annual += species[i][1];
+  var rates = species.map(function (s) { return total * s[1] / annual; });
 
   var showSpecies = species.length > 0 && !opt.compact;
 
@@ -322,8 +330,10 @@
   var lastTxt = "";
 
   function render() {
-    var elapsed = (Date.now() - yearOpen.getTime()) / 1000;
-    var txt = nf.format(Math.floor(total * elapsed));
+    // Whole seconds, matching the site's integer diff. Multiplying by a
+    // fractional elapsed would put the last digits out of step with it.
+    var elapsed = Math.floor((Date.now() - yearOpen.getTime()) / 1000);
+    var txt = nf.format(elapsed * total);
 
     if (txt !== lastTxt) {
       // Refit only when the number gets longer. Re-measuring every second is a
@@ -393,7 +403,10 @@
 
   render();
   relayout();
-  setInterval(render, 1000);
+  // Faster than the once-a-second value changes, so the card turns over within
+  // a frame or so of the actual second rather than lagging most of one. render()
+  // already no-ops when the formatted number is unchanged.
+  setInterval(render, 250);
 })();
 </script>
 </body>

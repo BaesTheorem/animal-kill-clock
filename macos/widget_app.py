@@ -9,11 +9,12 @@
 """
 Animal Kill Clock -- a macOS desktop widget.
 
-Hosts widget.html in a borderless, shadowless WKWebView window that sits at the
-desktop window level: above the wallpaper, below the desktop icons and every
-normal window. That is what makes it a widget you *pin* rather than another
-window you have to manage -- it never covers anything, never appears in Cmd-Tab,
-never follows you between Spaces, and does not need a Dock tile.
+Hosts widget.html in a borderless, shadowless WKWebView window pinned just above
+the desktop icons and roughly two billion levels below every normal window. That
+is what makes it a widget you *pin* rather than another window you have to
+manage: it never covers anything you are working in, never appears in Cmd-Tab,
+never follows you between Spaces, and does not need a Dock tile. It is still
+high enough to receive clicks, so the card can be dragged where you want it.
 
 Run directly:   uv run --script widget_app.py
 Or double-click "Animal Kill Clock.app" (see make-app.sh).
@@ -34,6 +35,8 @@ from AppKit import (
     NSApplicationActivationPolicyAccessory,
     NSBackingStoreBuffered,
     NSColor,
+    NSEvent,
+    NSMakePoint,
     NSMakeRect,
     NSMenu,
     NSMenuItem,
@@ -41,6 +44,7 @@ from AppKit import (
     NSScreen,
     NSStatusBar,
     NSVariableStatusItemLength,
+    NSView,
     NSWindow,
     NSWindowCollectionBehaviorCanJoinAllSpaces,
     NSWindowCollectionBehaviorIgnoresCycle,
@@ -51,6 +55,7 @@ from AppKit import (
 from Foundation import NSURL, NSTimer
 from Quartz import (
     CGWindowLevelForKey,
+    kCGDesktopIconWindowLevelKey,
     kCGDesktopWindowLevelKey,
     kCGMaximumWindowLevelKey,
 )
@@ -92,6 +97,7 @@ SIZES = [("Small", 380), ("Medium", 480), ("Large", 620), ("Extra Large", 820)]
 
 MODES = [
     ("Pinned to Desktop", "desktop"),
+    ("Behind Desktop Icons", "wallpaper"),
     ("Float Above Windows", "float"),
     ("Normal Window", "normal"),
 ]
@@ -101,6 +107,11 @@ DEFAULTS = {
     "region": "us",
     "theme": "light",
     "anchor": "top-right",
+    # Set by dragging: [x, top] in screen coordinates, with `top` measured the
+    # Cocoa way (from the bottom of the display). Storing the TOP edge rather
+    # than the origin keeps the card from jumping when its height changes, since
+    # a Cocoa frame grows upward from its origin.
+    "pos": None,
     "width": 480,
     "margin": 28,
     "compact": False,
@@ -135,6 +146,78 @@ def compact_number(n):
     return str(int(n))
 
 
+DEBUG = os.environ.get("AKC_DEBUG")
+
+
+def debug(msg):
+    if not DEBUG:
+        return
+    with open("/tmp/akc-debug.log", "a") as fh:
+        fh.write(msg + "\n")
+
+
+class WidgetWindow(NSWindow):
+    """A borderless window that can still take the keyboard and mouse.
+
+    NSWindow returns False from canBecomeKeyWindow for borderless windows, and a
+    window that can never become key does not get mouse events delivered to its
+    views. Overriding it is what makes the card grabbable at all.
+    """
+
+    def canBecomeKeyWindow(self):
+        return True
+
+    def canBecomeMainWindow(self):
+        return True
+
+
+class DragView(NSView):
+    """A transparent surface over the web view that drags the window.
+
+    WKWebView consumes mouse events, so setMovableByWindowBackground: never
+    fires and CSS -webkit-app-region (an Electron feature) does nothing here.
+    Laying an ordinary NSView over the whole web view is the reliable way to get
+    a grabbable card. The page underneath is display-only, so nothing is lost;
+    its one link is duplicated in the menu.
+    """
+
+    def initWithFrame_(self, frame):
+        self = objc.super(DragView, self).initWithFrame_(frame)
+        if self is None:
+            return None
+        self.owner = None
+        self._grab = None
+        self._origin = None
+        return self
+
+    def acceptsFirstMouse_(self, event):
+        # The widget is an accessory app that is usually not frontmost. Without
+        # this, the first click would only bring it forward and the drag would
+        # need a second click.
+        return True
+
+    def mouseDown_(self, event):
+        self._grab = NSEvent.mouseLocation()
+        self._origin = self.window().frame().origin
+        debug("mouseDown grab=%s origin=%s" % (self._grab, self._origin))
+
+    def mouseDragged_(self, event):
+        if self._grab is None:
+            return
+        now = NSEvent.mouseLocation()
+        self.window().setFrameOrigin_(
+            NSMakePoint(self._origin.x + (now.x - self._grab.x),
+                        self._origin.y + (now.y - self._grab.y))
+        )
+
+    def mouseUp_(self, event):
+        moved = self._grab is not None
+        self._grab = None
+        debug("mouseUp moved=%s" % moved)
+        if moved and self.owner is not None:
+            self.owner.rememberPosition()
+
+
 class Widget(NSObject):
     # ------------------------------------------------------------------ setup
     def initWithConfig_(self, cfg):
@@ -150,13 +233,12 @@ class Widget(NSObject):
     @objc.python_method
     def buildWindow(self):
         rect = NSMakeRect(0, 0, self.cfg["width"], 340)
-        self.window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+        self.window = WidgetWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             rect, NSWindowStyleMaskBorderless, NSBackingStoreBuffered, False
         )
         self.window.setOpaque_(False)
         self.window.setBackgroundColor_(NSColor.clearColor())
         self.window.setHasShadow_(False)
-        self.window.setMovableByWindowBackground_(True)
         self.window.setReleasedWhenClosed_(False)
 
         conf = WKWebViewConfiguration.alloc().init()
@@ -169,6 +251,14 @@ class Widget(NSObject):
         # Let the wallpaper show through the window's transparent margins.
         self.web.setValue_forKey_(False, "drawsBackground")
         self.window.contentView().addSubview_(self.web)
+
+        self.drag = DragView.alloc().initWithFrame_(
+            self.window.contentView().bounds()
+        )
+        self.drag.owner = self
+        self.drag.setAutoresizingMask_(1 << 1 | 1 << 4)  # width | height
+        self.window.contentView().addSubview_(self.drag)
+
         self.window.orderFront_(None)
 
     @objc.python_method
@@ -221,7 +311,10 @@ class Widget(NSObject):
 
         self._submenu(m, "Display", MODES, b"setMode:", self.cfg["mode"])
         self._submenu(m, "Region", REGIONS, b"setRegion:", self.cfg["region"])
-        self._submenu(m, "Position", ANCHORS, b"setAnchor:", self.cfg["anchor"])
+        self._submenu(m, "Position", ANCHORS,
+                      b"setAnchor:", None if self.cfg.get("pos") else self.cfg["anchor"])
+        if self.cfg.get("pos"):
+            m.addItem_(self._item("Reset Position", b"resetPosition:", ""))
         self._submenu(m, "Size", [(n, str(w)) for n, w in SIZES],
                       b"setWidth:", str(self.cfg["width"]))
         self._submenu(m, "Theme", [("Light", "light"), ("Dark", "dark")],
@@ -279,8 +372,18 @@ class Widget(NSObject):
 
         mode = cfg["mode"]
         if mode == "desktop":
+            # Just above the desktop icons, which is the lowest level that can
+            # still be clicked: the wallpaper level below it is covered by the
+            # Dock's own full-screen backdrop window, so a window down there
+            # never receives a mouse event no matter what it is set to. This is
+            # still ~2.1 billion levels below normal windows, so the widget
+            # cannot cover anything you are actually working in.
+            level = CGWindowLevelForKey(kCGDesktopIconWindowLevelKey) + 1
+            self.window.setIgnoresMouseEvents_(False)
+        elif mode == "wallpaper":
+            # True wallpaper level: behind the desktop icons too, and therefore
+            # not draggable. Drag it in another mode, then switch back.
             level = CGWindowLevelForKey(kCGDesktopWindowLevelKey)
-            # Behind everything, so clicks belong to whatever is actually there.
             self.window.setIgnoresMouseEvents_(True)
         elif mode == "float":
             level = CGWindowLevelForKey(kCGMaximumWindowLevelKey) - 1
@@ -334,12 +437,45 @@ class Widget(NSObject):
         )
 
     @objc.python_method
+    def rememberPosition(self):
+        """Record where a drag left the card, so nothing snaps it back."""
+        f = self.window.frame()
+        self.cfg["pos"] = [float(f.origin.x), float(f.origin.y + f.size.height)]
+        save_config(self.cfg)
+
+    @objc.python_method
+    def visibleFrameFor(self, x, y):
+        """The usable area of whichever display holds the given point."""
+        for s in NSScreen.screens():
+            fr = s.frame()
+            if (fr.origin.x <= x <= fr.origin.x + fr.size.width
+                    and fr.origin.y <= y <= fr.origin.y + fr.size.height):
+                return s.visibleFrame()
+        return NSScreen.screens()[0].visibleFrame()
+
+    @objc.python_method
     def place(self):
+        frame = self.window.frame()
+        w, h = self.cfg["width"], frame.size.height
+
+        pos = self.cfg.get("pos")
+        if pos:
+            # A dragged position wins over the anchor. Clamp it so the card can
+            # never end up stranded off-screen after a display is unplugged or
+            # the resolution changes -- keep a grabbable strip of it reachable.
+            x, top = float(pos[0]), float(pos[1])
+            vis = self.visibleFrameFor(x + w / 2, top - h / 2)
+            edge = 80.0
+            x = max(vis.origin.x - w + edge,
+                    min(x, vis.origin.x + vis.size.width - edge))
+            top = max(vis.origin.y + edge,
+                      min(top, vis.origin.y + vis.size.height))
+            self.window.setFrame_display_(NSMakeRect(x, top - h, w, h), True)
+            return
+
         screens = NSScreen.screens()
         idx = min(self.cfg["screen"], len(screens) - 1)
         vis = screens[idx].visibleFrame()
-        frame = self.window.frame()
-        w, h = self.cfg["width"], frame.size.height
         m = self.cfg["margin"]
         anchor = self.cfg["anchor"]
 
@@ -374,7 +510,12 @@ class Widget(NSObject):
         self.update(region=sender.representedObject())
 
     def setAnchor_(self, sender):
-        self.update(anchor=sender.representedObject())
+        # Choosing an anchor is an explicit request to re-place the card, so it
+        # discards whatever position a drag had pinned.
+        self.update(anchor=sender.representedObject(), pos=None)
+
+    def resetPosition_(self, sender):
+        self.update(pos=None)
 
     def setTheme_(self, sender):
         self.update(theme=sender.representedObject())

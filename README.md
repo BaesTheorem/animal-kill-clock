@@ -29,24 +29,36 @@ open ~/Desktop/Apps/"Animal Kill Clock.app"
 Requires [uv](https://docs.astral.sh/uv/); the first launch resolves PyObjC and
 caches it.
 
-The window sits at the **desktop window level**: above your wallpaper, below
-your icons and every normal window. So it is pinned rather than floating: it
-never covers anything, never shows up in Cmd-Tab or Mission Control, and follows
-you across every Space. There is no Dock tile; everything is under the
+**Drag it anywhere.** Grab the card and move it; where you drop it is
+remembered. Pick an anchor from the menu to snap it back to an edge.
+
+The window sits just above your desktop icons and about two billion levels below
+every normal window. So it is pinned rather than floating: it never covers
+anything you're working in, never shows up in Cmd-Tab or Mission Control, and
+follows you across every Space. There is no Dock tile; everything is under the
 **Kill Clock** menu bar item, which also carries the running total so the number
-is still readable when something full-screen is covering the desktop.
+is still readable when something full-screen covers the desktop.
 
 From that menu:
 
-- **Display**: pinned to desktop, floating above windows, or a normal window
+- **Display**: *Pinned to Desktop* (the default, draggable), *Behind Desktop
+  Icons* (true wallpaper level, so it can't be clicked or dragged), *Float Above
+  Windows*, or *Normal Window*
 - **Region**: United States, United Kingdom, Canada, Australia
-- **Position**: nine anchors, since a desktop-level window can't be dragged
-  (clicks there belong to the Finder). Switch to *Float Above Windows* if you'd
-  rather drag it into place.
+- **Position**: nine anchors, plus **Reset Position** once you've dragged it
 - **Size**, **Theme**, **Screen**, **Just the Number**, **Show Border**
 - **Open at Login**: writes a LaunchAgent
 
 Settings persist to `~/Library/Application Support/AnimalKillClock/config.json`.
+
+### Why not a real macOS widget?
+
+Because a native one can't tick. Apple's widget guidance covers WidgetKit
+widgets, the kind that live in Notification Center and on the desktop, and it is
+explicit that they "don't support continuous, real-time updates" and that update
+frequency is limited. A clock counting 1,758 a second is exactly what that
+budget rules out. Hence a small hosted window instead, placed to behave like a
+widget: pinned, glanceable, and covering nothing.
 
 ## Windows
 
@@ -70,13 +82,20 @@ The full table is in `windows/README.md`.
 Same method as the source site: a per-second rate multiplied by the seconds
 elapsed since January 1 in your local time zone. Nothing is fetched at runtime.
 
-The rates are derived from published annual totals divided by the real length of
-the current year, so the per-species lines always sum to the headline and a leap
-year doesn't inflate the count. The U.S. figures are USDA slaughter data
-adjusted for imports, exports and pre-slaughter mortality, plus the Counting
-Animals estimates for fish and shellfish, which comes to roughly 55.4 billion a
-year, about 1,758 a second. The other three countries are published only as a
-per-second rate, so those clocks run a total with no breakdown.
+The headline uses each region's **published per-second rate** (1,758 for the
+U.S.), not a rate re-derived from the annual totals. That distinction matters:
+dividing the annual figures by the length of the year gives about 1,757.96 a
+second, which looks more principled but drifts several hundred thousand below
+the website by mid-year. Using the published integer keeps the two in step to
+the digit.
+
+The per-species lines then split that same headline in proportion to each
+species' share of the annual total, so the rows still sum to the number above
+them. Those U.S. annual figures are USDA slaughter data adjusted for imports,
+exports and pre-slaughter mortality, plus the Counting Animals estimates for
+fish and shellfish, roughly 55.4 billion a year. The other three countries are
+published only as a per-second rate, so those clocks run a total with no
+breakdown.
 
 To refresh the numbers, read the FAQ table at animalclock.org and edit the
 `REGIONS` block at the top of the script in `widget.html` (and the matching one
