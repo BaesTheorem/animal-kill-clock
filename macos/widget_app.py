@@ -872,6 +872,12 @@ LOGIN_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 def main():
+    # install.sh runs this once with --prewarm so uv resolves and caches the
+    # PyObjC dependencies at install time. By the time the imports above have
+    # executed, that work is done; exit before putting anything on screen.
+    if "--prewarm" in sys.argv:
+        return
+
     if not os.path.exists(WIDGET):
         sys.exit(f"widget.html not found next to the app: {WIDGET}")
 
